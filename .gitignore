@@ -1,0 +1,21 @@
+# IDE
+.idea/
+.vscode/
+.claude/
+.gemini/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+
+/results
+*.csv
+*.pt
+*.pdf
+*.png
