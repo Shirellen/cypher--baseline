@@ -19,8 +19,7 @@ __pycache__/
 *.pt
 *.pdf
 *.png
-baseline/tata
-baseline/QPPNet
-baseline/LEON
-baseline/learnedcardinalities
-baseline/BaoForPostgreSQL
+*.sql
+*.md
+*.svg
+*.html
