@@ -2,14 +2,20 @@
 """
 TATA Cypher Baseline 训练脚本。
 
-使用 BaoNet（树卷积）+ Prediction（MLP）预测 Execution Time。
-代价信号：Execution Time（毫秒），log(x+0.001) + min-max 归一化（与原版 TATA 一致）。
+TASK = 'cost'：预测 Execution Time（毫秒），标签 = Execution Time
+TASK = 'cost'：预测 Cardinality（行数），标签 = 根节点 Rows
+切换只需修改下方 TASK 变量，输出路径、文件名、列名全部自动切换。
+
+代价信号归一化：log(x+0.001) + min-max（与原版 TATA 一致）。
 评估指标：Q-error（与其他 baseline 保持一致）。
 
 关键流程（skill 文档 7.7）：
   先解析 train/val/test 全部，让 encoding 词典完全稳定，
   再用最终维度重建所有数据集的特征树，然后初始化模型。
 """
+
+# ── 任务开关（'cost' 或 'card'）──────────────────────────────────────────────
+TASK = 'cost'   # ← 改这里切换任务
 
 import os
 import sys
@@ -50,7 +56,7 @@ class Args:
     lr         = 1e-4
     epochs     = 200
     hid_units  = 256       # Prediction MLP 隐藏层维度
-    newpath    = './results/job-full/tata_baseline/'
+    newpath    = f'./results/job-full/tata_{TASK}_baseline/'
     save_freq  = 50        # 每隔多少 epoch 保存一次 checkpoint
 
 args = Args()
@@ -239,12 +245,13 @@ if __name__ == '__main__':
     logger.info(f'Train size: {len(train_df)}, Val size: {len(val_df)}, '
                 f'Test size: {len(test_df)}')
 
-    # 第一步：创建标签归一化器
+        # 第一步：创建标签归一化器
     cost_norm = TataLabelNormalizer()
 
     # 第二步：解析所有数据集，让 encoding 词典完全稳定
     # 训练集：reset_norm=True，确定标签归一化参数
-    train_ds = TataCypherDataset(train_df, encoding, cost_norm=cost_norm, reset_norm=True)
+    train_ds = TataCypherDataset(train_df, encoding, cost_norm=cost_norm,
+                                 reset_norm=True, label_field=TASK)
     logger.info(f'[Train] {len(train_ds)} queries, '
                 f'node_feature_dim={train_ds.node_feature_dim}')
 
@@ -252,11 +259,11 @@ if __name__ == '__main__':
     val_ds  = TataCypherDataset(val_df,  encoding, cost_norm=cost_norm,
                                 est_log_min=train_ds.est_log_min,
                                 est_log_max=train_ds.est_log_max,
-                                reset_norm=False)
+                                reset_norm=False, label_field=TASK)
     test_ds = TataCypherDataset(test_df, encoding, cost_norm=cost_norm,
                                 est_log_min=train_ds.est_log_min,
                                 est_log_max=train_ds.est_log_max,
-                                reset_norm=False)
+                                reset_norm=False, label_field=TASK)
 
     # 第三步：encoding 词典已稳定，计算最终节点特征维度
     node_feature_dim = compute_node_feature_dim(encoding)
@@ -322,14 +329,15 @@ if __name__ == '__main__':
     else:
         all_src_files = ['unknown'] * len(all_ids)
 
+    true_col_name = 'true_time' if TASK == 'cost' else 'true_card'
     result_df = pd.DataFrame({
-        'id':        all_ids[:len(all_preds)],
-        'pred':      all_preds,
-        'true_time': all_true,
-        'q_error':   per_sample_q,
-        'dataset':   all_datasets[:len(all_preds)],
-        'src_file':  all_src_files[:len(all_preds)],
+        'id':           all_ids[:len(all_preds)],
+        'pred':         all_preds,
+        true_col_name:  all_true,
+        'q_error':      per_sample_q,
+        'dataset':      all_datasets[:len(all_preds)],
+        'src_file':     all_src_files[:len(all_preds)],
     })
-    result_csv_path = os.path.join(args.newpath, f'tata_baseline_test_results_{timestamp}.csv')
+    result_csv_path = os.path.join(args.newpath, f'tata_{TASK}_baseline_test_results_{timestamp}.csv')
     result_df.to_csv(result_csv_path, index=False)
     logger.info(f'Test results saved to: {result_csv_path}')

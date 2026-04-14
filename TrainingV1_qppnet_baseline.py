@@ -2,14 +2,20 @@
 """
 QPPNet Cypher Baseline 训练脚本。
 
-使用 QPPNet 的每算子 NeuralUnit 架构预测 Execution Time。
-代价信号：Execution Time（毫秒），不额外归一化（QPPNet 原版风格）。
+TASK = 'cost'：预测 Execution Time（毫秒），标签 = Execution Time
+TASK = 'card'：预测 Cardinality（行数），标签 = 根节点 Rows
+切换只需修改下方 TASK 变量，输出路径、文件名、列名全部自动切换。
+
+代价信号：log1p 归一化，softplus 保证非负。
 评估指标：Q-error（与其他 baseline 保持一致）。
 
 关键流程（skill 文档 7.7）：
   先解析 train/val/test 全部，让 encoding 词典完全稳定，
   再用最终维度初始化模型，并对所有数据集调用 rebuild。
 """
+
+# ── 任务开关（'cost' 或 'card'）──────────────────────────────────────────────
+TASK = 'card'   # ← 改这里切换任务
 
 import os
 import sys
@@ -50,7 +56,7 @@ class Args:
     step_size     = 1000
     gamma         = 0.95
     device        = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-    newpath       = './results/job-full/qppnet_baseline/'
+    newpath       = f'./results/job-full/qppnet_{TASK}_baseline/'
     save_freq     = 50        # 每隔多少 epoch 保存一次 checkpoint
 
 args = Args()
@@ -211,17 +217,18 @@ if __name__ == '__main__':
 
     # 第一步：解析所有数据集，让 encoding 词典完全稳定
     # 训练集：fit_normalizer=True，计算 mean_range_dict
-    train_ds = QPPNetCypherDataset(train_df, encoding, fit_normalizer=True)
+    train_ds = QPPNetCypherDataset(train_df, encoding, fit_normalizer=True,
+                                   label_field=TASK)
     logger.info(f'[Train] {len(train_ds)} queries, '
                 f'{len(train_ds.groups)} template groups')
 
     # val/test：fit_normalizer=False，复用训练集的 mean_range_dict
     val_ds  = QPPNetCypherDataset(val_df,  encoding,
                                   mean_range_dict=train_ds.mean_range_dict,
-                                  fit_normalizer=False)
+                                  fit_normalizer=False, label_field=TASK)
     test_ds = QPPNetCypherDataset(test_df, encoding,
                                   mean_range_dict=train_ds.mean_range_dict,
-                                  fit_normalizer=False)
+                                  fit_normalizer=False, label_field=TASK)
 
     # 第二步：encoding 词典已稳定，计算最终节点特征维度
     node_feat_dim = compute_node_feature_dim(encoding)
@@ -289,14 +296,15 @@ if __name__ == '__main__':
     else:
         all_src_files = ['unknown'] * len(all_ids)
 
+    true_col_name = 'true_time' if TASK == 'cost' else 'true_card'
     result_df = pd.DataFrame({
-        'id':        all_ids[:len(all_preds)],
-        'pred':      all_preds,
-        'true_time': all_true,
-        'q_error':   per_sample_q,
-        'dataset':   all_datasets[:len(all_preds)],
-        'src_file':  all_src_files[:len(all_preds)],
+        'id':           all_ids[:len(all_preds)],
+        'pred':         all_preds,
+        true_col_name:  all_true,
+        'q_error':      per_sample_q,
+        'dataset':      all_datasets[:len(all_preds)],
+        'src_file':     all_src_files[:len(all_preds)],
     })
-    result_csv_path = os.path.join(args.newpath, f'qppnet_baseline_test_results_{timestamp}.csv')
+    result_csv_path = os.path.join(args.newpath, f'qppnet_{TASK}_baseline_test_results_{timestamp}.csv')
     result_df.to_csv(result_csv_path, index=False)
     logger.info(f'Test results saved to: {result_csv_path}')

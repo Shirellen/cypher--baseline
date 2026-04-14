@@ -1,10 +1,16 @@
 """
 MSCN Cypher Baseline 训练脚本。
 
-预测目标：Cardinality（根节点实际行数）
-归一化：log(Rows) → min-max → [0,1]（与原版 MSCN 一致）
+TASK = 'card'：预测 Cardinality（根节点实际行数），标签 = 根节点 Rows（默认）
+TASK = 'cost'：预测 Execution Time（毫秒），标签 = Execution Time
+切换只需修改下方 TASK 变量，输出路径、文件名、列名全部自动切换。
+
+归一化：log → min-max → [0,1]（与原版 MSCN 一致）
 评估指标：Q-error（与 TrainingV1_leon_baseline.py 保持一致）
 """
+
+# ── 任务开关（'card' 或 'cost'）──────────────────────────────────────────────
+TASK = 'card'   # ← 改这里切换任务（MSCN 默认预测 card）
 
 import os, sys, time, datetime, logging
 import numpy as np
@@ -35,7 +41,7 @@ class Args:
     clip_size   = 50
     hid_units   = 256
     device      = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-    newpath     = os.path.join(_PROJECT_ROOT, 'results', 'job-full', 'mscn_baseline')
+    newpath     = os.path.join(_PROJECT_ROOT, 'results', 'job-full', f'mscn_{TASK}_baseline')
     sch_decay   = 0.6
 
 args = Args()
@@ -183,9 +189,12 @@ if __name__ == '__main__':
 
     # ── 第一步：先把 train/val/test 全部解析，让 encoding 词典完全稳定 ──────
     # 这样三个集合的特征维度天然一致，不需要截断
-    train_ds = MscnCypherDataset(train_df, encoding, card_norm, reset_norm=True)
-    val_ds   = MscnCypherDataset(val_df,   encoding, card_norm, reset_norm=False)
-    test_ds  = MscnCypherDataset(test_df,  encoding, card_norm, reset_norm=False)
+    train_ds = MscnCypherDataset(train_df, encoding, card_norm, reset_norm=True,
+                                 label_field=TASK)
+    val_ds   = MscnCypherDataset(val_df,   encoding, card_norm, reset_norm=False,
+                                 label_field=TASK)
+    test_ds  = MscnCypherDataset(test_df,  encoding, card_norm, reset_norm=False,
+                                 label_field=TASK)
 
     # encoding 词典完全稳定后，重新计算最终特征维度
     final_sample_feats, final_predicate_feats, final_join_feats = compute_feature_dims(encoding)
@@ -228,14 +237,15 @@ if __name__ == '__main__':
         model, test_ds, args.bs, card_norm['min_val'], card_norm['max_val'], args.device, prints=True
     )
 
+    true_col_name = 'true_card' if TASK == 'card' else 'true_time'
     result_df = pd.DataFrame({
-        'id':        list(test_df['id']),
-        'pred':      all_preds,
-        'true_card': all_labels,
-        'q_error':   per_q,
-        'dataset':   list(test_df['dataset']) if 'dataset' in test_df.columns else ['unknown'] * len(all_preds),
-        'src_file':  list(test_df['src_file']) if 'src_file' in test_df.columns else ['unknown'] * len(all_preds),
+        'id':           list(test_df['id']),
+        'pred':         all_preds,
+        true_col_name:  all_labels,
+        'q_error':      per_q,
+        'dataset':      list(test_df['dataset']) if 'dataset' in test_df.columns else ['unknown'] * len(all_preds),
+        'src_file':     list(test_df['src_file']) if 'src_file' in test_df.columns else ['unknown'] * len(all_preds),
     })
-    result_csv = os.path.join(args.newpath, f'mscn_baseline_test_results_{timestamp}.csv')
+    result_csv = os.path.join(args.newpath, f'mscn_{TASK}_baseline_test_results_{timestamp}.csv')
     result_df.to_csv(result_csv, index=False)
     logger.info(f'Test results saved to: {result_csv}')

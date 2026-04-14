@@ -2,10 +2,16 @@
 """
 LEON Cypher Baseline 训练脚本。
 
-使用 LEON 的 TreeConvolution 作为 plan encoder，接 Prediction MLP 预测 Execution Time。
-代价信号：Execution Time（秒），取 log1p 后用 Normalizer 归一化到 [0,1]。
+TASK = 'card'：预测 Execution Time（毫秒），标签 = Execution Time
+TASK = 'card'：预测 Cardinality（行数），标签 = 根节点 Rows
+切换只需修改下方 TASK 变量，输出路径、文件名、列名全部自动切换。
+
+代价信号：log1p 后用 Normalizer 归一化到 [0,1]。
 评估指标：Q-error（与 TrainingV1_cypher_cost_job.py 保持一致）。
 """
+
+# ── 任务开关（'cost' 或 'card'）──────────────────────────────────────────────
+TASK = 'card'   # ← 改这里切换任务
 
 import os
 import sys
@@ -49,8 +55,8 @@ class Args:
     tree_out_dim = 128         # TreeConv 输出的 plan embedding 维度
     mlp_hidden_dim = 256       # Prediction MLP 隐藏层维度
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-    newpath = './results/job-full/leon_baseline/'
-    to_predict = 'cost'        # 预测目标（此处为 Execution Time，与 cost 流程一致）
+    newpath = f'./results/job-full/leon_{TASK}_baseline/'
+    to_predict = TASK          # 预测目标，由 TASK 开关决定
     sch_decay = 0.6            # 学习率衰减因子（每 epoch 后按 val loss 调整）
 
 args = Args()
@@ -272,12 +278,14 @@ if __name__ == '__main__':
     logger.info(f'Train size: {len(train_df)}, Val size: {len(val_df)}')
 
     # 训练集：reset_norm=True，用训练集数据确定 Normalizer 的 min/max
-    train_ds = LeonCypherDataset(train_df, encoding, cost_norm, reset_norm=True)
-    logger.info(f'[Norm] log(ExecTime) min={cost_norm.mini:.4f}, max={cost_norm.maxi:.4f}')
+    train_ds = LeonCypherDataset(train_df, encoding, cost_norm, reset_norm=True,
+                                 label_field=TASK)
+    logger.info(f'[Norm] log(label) min={cost_norm.mini:.4f}, max={cost_norm.maxi:.4f}')
     logger.info(f'[Dim] node_feature_dim={train_ds.node_feature_dim}, query_feature_dim={train_ds.query_feature_dim}')
 
     # 验证集：reset_norm=False，复用训练集的 min/max
-    val_ds = LeonCypherDataset(val_df, encoding, cost_norm, reset_norm=False)
+    val_ds = LeonCypherDataset(val_df, encoding, cost_norm, reset_norm=False,
+                               label_field=TASK)
     # encoding 词典在 val_ds 解析后可能继续扩充，统一 pad 到 train_ds 的维度
     val_ds.pad_query_feats_to(train_ds.query_feature_dim)
 
@@ -319,7 +327,8 @@ if __name__ == '__main__':
 
     test_csv = data_path + 'test_by_para_v2_same_500.csv'
     test_df = pd.read_csv(test_csv)
-    test_ds = LeonCypherDataset(test_df, encoding, cost_norm, reset_norm=False)
+    test_ds = LeonCypherDataset(test_df, encoding, cost_norm, reset_norm=False,
+                               label_field=TASK)
     test_ds.pad_query_feats_to(train_ds.query_feature_dim)
 
     logger.info('Evaluating on test set:')
@@ -328,14 +337,15 @@ if __name__ == '__main__':
     )
 
     # 保存预测结果 CSV（与 TrainingV1_cypher_cost_job.py 格式一致）
+    true_col_name = 'true_time' if TASK == 'cost' else 'true_card'
     result_df = pd.DataFrame({
-        'id':          list(test_df['id']),
-        'pred':        all_preds,
-        'true_time':   all_true,
-        'q_error':     per_sample_q,
-        'dataset':     list(test_df.get('dataset', ['unknown'] * len(all_preds))),
-        'src_file':    list(test_df.get('src_file', ['unknown'] * len(all_preds))),
+        'id':           list(test_df['id']),
+        'pred':         all_preds,
+        true_col_name:  all_true,
+        'q_error':      per_sample_q,
+        'dataset':      list(test_df.get('dataset', ['unknown'] * len(all_preds))),
+        'src_file':     list(test_df.get('src_file', ['unknown'] * len(all_preds))),
     })
-    result_csv_path = os.path.join(args.newpath, f'leon_baseline_test_results_{timestamp}.csv')
+    result_csv_path = os.path.join(args.newpath, f'leon_{TASK}_baseline_test_results_{timestamp}.csv')
     result_df.to_csv(result_csv_path, index=False)
     logger.info(f'Test results saved to: {result_csv_path}')
